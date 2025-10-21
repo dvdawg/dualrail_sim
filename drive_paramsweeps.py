@@ -1,14 +1,8 @@
-# dualrail_sweep_fixed_FAST.py
-# Requires: qutip>=4, numpy, matplotlib
-
 import numpy as np
 import matplotlib.pyplot as plt
 import qutip as qt
-import time  # To show how fast it is now
+import time
 
-# ==============================================================================
-# (0) Helpers (Unchanged)
-# ==============================================================================
 
 def get_dims_from_ops(ops):
     dims_left = ops[0].dims[0]
@@ -23,9 +17,6 @@ def get_dims_from_ops(ops):
     N1, N2, Nc = Ns
     return N1, N2, Nc
 
-# ==============================================================================
-# (1) YOUR ORIGINAL HAMILTONIAN (Unchanged)
-# ==============================================================================
 
 def dual_rail_H(
     N1=10, N2=10, Nc=20,
@@ -52,9 +43,6 @@ def dual_rail_H(
     H_12 = g12 * (b1_dag*b2 + b1*b2_dag - b1_dag*b2_dag - b1*b2)
     return H_loc + H_1c + H_2c + H_12
 
-# ==============================================================================
-# (2) RWA/Full toggle version + operator pack (Unchanged)
-# ==============================================================================
 
 def make_H(N1, N2, Nc, pars, use_rwa=True):
     w1, w2, wc = pars["omega_1"], pars["omega_2"], pars["omega_c"]
@@ -79,17 +67,12 @@ def make_H(N1, N2, Nc, pars, use_rwa=True):
         H += g12*(b1d*b2 + b1*b2d - b1d*b2d - b1*b2)
     return H, (b1, b2, bc)
 
-# ==============================================================================
-# (3) Eigen-labeling + numerical χ extraction (Unchanged)
-#     (This will be much faster due to smaller N)
-# ==============================================================================
 
 def eig_and_labels(H, ops, max_states=120):
-    # Ensure max_states is not larger than the Hilbert space
     N_hilbert = H.shape[0]
     n_eig = min(max_states, N_hilbert)
     
-    evals, evecs = H.eigenstates(eigvals=n_eig)  # lowest levels
+    evals, evecs = H.eigenstates(eigvals=n_eig)
     b1, b2, bc = ops
     n1_op, n2_op, nc_op = b1.dag()*b1, b2.dag()*b2, bc.dag()*bc
     labels = []
@@ -119,9 +102,8 @@ def cavity_freq_given_qubit_state(evals, labels, qubit='q1', q_state='g', n=0):
     return float(evals[i_np1] - evals[i_n])
 
 def dispersive_shifts(H, ops):
-    # Adjust max_states based on new, smaller Hilbert space size
     N_hilbert = H.shape[0]
-    n_eig = min(120, N_hilbert) # Use 120 or N, whichever is smaller
+    n_eig = min(120, N_hilbert)
     
     evals, evecs, labels = eig_and_labels(H, ops, max_states=n_eig)
     wcg1 = cavity_freq_given_qubit_state(evals, labels, qubit='q1', q_state='g', n=0)
@@ -132,46 +114,29 @@ def dispersive_shifts(H, ops):
     chi2 = 0.5*(wce2 - wcg2) if (wcg2 is not None and wce2 is not None) else np.nan
     return chi1, chi2, dict(wcg1=wcg1, wce1=wce1, wcg2=wcg2, wce2=wce2)
 
-# ==============================================================================
-# (4) REVISED: Driven dynamics using steadystate (FAST)
-#     This replaces your old 'run_drive_sweep' function
-# ==============================================================================
 
 def sweep_drive_spectrum_ss(H_rwa, ops, pars, wd_span, eps=0.01, 
                             kappa_c=1e-3, gamma1=2e-4, gamma2=2e-4,
                             gphi1=1e-4, gphi2=1e-4, drive_on='c'):
-    """
-    Calculates the steady state response vs. drive frequency (wd).
-    
-    This is MUCH faster than mesolve because it calculates the steady state
-    directly using a time-INDEPENDENT Hamiltonian in the rotating frame
-    of the drive.
-    """
     nc_list, P_c_list = [], []
     
-    # Get operators
     b1, b2, bc = ops
     n1_op, n2_op, nc_op = b1.dag()*b1, b2.dag()*b2, bc.dag()*bc
 
-    # Get parameters
     w1, w2, wc = pars["omega_1"], pars["omega_2"], pars["omega_c"]
     k1, k2, kc = pars["k1"], pars["k2"], pars["kc"]
     g1, g2, g12 = pars["g1"], pars["g2"], pars["g12"]
 
-    # --- Build the parts of the Hamiltonian that *don't* depend on wd ---
     
-    # 1. Kerr terms (invariant in rotating frame)
     H_kerr = (k1/2.0) * n1_op * (n1_op - 1)
     H_kerr += (k2/2.0) * n2_op * (n2_op - 1)
     if kc != 0.0:
         H_kerr += (kc/2.0) * nc_op * (nc_op - 1)
     
-    # 2. RWA interaction terms (invariant in global rotating frame)
     H_int = g1*(b1.dag()*bc + b1*bc.dag()) 
     H_int += g2*(b2.dag()*bc + b2*bc.dag())
     H_int += g12*(b1.dag()*b2 + b1*b2.dag())
     
-    # 3. RWA drive term
     H_drive = 0
     if drive_on == 'c':
         H_drive = (eps/2.0) * (bc + bc.dag())
@@ -180,46 +145,33 @@ def sweep_drive_spectrum_ss(H_rwa, ops, pars, wd_span, eps=0.01,
     else:
         H_drive = (eps/2.0) * (b2 + b2.dag())
 
-    # Sum the static parts
     H_static = H_kerr + H_int + H_drive
 
-    # 4. Build collapse operators (c_ops)
     c_ops = [
-        np.sqrt(kappa_c)*bc,         # Cavity decay
-        np.sqrt(gamma1)*b1,          # Qubit 1 decay
-        np.sqrt(gamma2)*b2,          # Qubit 2 decay
-        np.sqrt(2*gphi1)*n1_op,      # Qubit 1 dephasing
-        np.sqrt(2*gphi2)*n2_op       # Qubit 2 dephasing
+        np.sqrt(kappa_c)*bc,
+        np.sqrt(gamma1)*b1,
+        np.sqrt(gamma2)*b2,
+        np.sqrt(2*gphi1)*n1_op,
+        np.sqrt(2*gphi2)*n2_op
     ]
 
-    # --- Now, sweep over the drive frequency (wd) ---
     for wd in wd_span:
-        # Build the detuning Hamiltonian (the only part that changes)
-        # H_det = (w1-wd)*n1 + (w2-wd)*n2 + (wc-wd)*nc
         H_det = ((w1 - wd) * n1_op 
                + (w2 - wd) * n2_op 
                + (wc - wd) * nc_op)
         
-        # Total time-independent Hamiltonian in the rotating frame
         H_ss = H_static + H_det
         
-        # Find steady state density matrix (FAST)
         rho_ss = qt.steadystate(H_ss, c_ops)
         
-        # Calculate expectation values
         nc_ss = qt.expect(nc_op, rho_ss)
         
         nc_list.append(nc_ss)
-        P_c_list.append(kappa_c * nc_ss * wd) # Power proxy
+        P_c_list.append(kappa_c * nc_ss * wd)
 
     return np.array(nc_list), np.array(P_c_list)
 
 
-# ==============================================================================
-# (5) REVISED: Sweeps
-#     'sweep_detuning_and_compute_chi' is unchanged
-#     'sweep_drive_spectrum' is removed (replaced by new function in sec 4)
-# ==============================================================================
 
 def sweep_detuning_and_compute_chi(N1, N2, Nc, base_pars, use_rwa=True,
                                    detuning_span=np.linspace(-1.0, +1.0, 21),
@@ -242,26 +194,19 @@ def sweep_detuning_and_compute_chi(N1, N2, Nc, base_pars, use_rwa=True,
 if __name__ == "__main__":
     t_start = time.time()
     
-    # Base parameters (GHz). Tune as desired.
     base_pars = dict(
         omega_1=5.0, omega_2=5.3, omega_c=7.2,
         k1=-0.25, k2=-0.27, kc=0.0,
         g1=0.06, g2=0.055, g12=0.012
     )
 
-    # ==========================================================================
-    # --- FIX 1: Reduced dimensions for MUCH faster computation ---
-    # N1, N2, Nc = 8, 8, 20  # OLD (N=1280)
-    N1, N2, Nc = 3, 3, 10    # NEW (N=90)
-    # ==========================================================================
+    N1, N2, Nc = 3, 3, 10
     print(f"Running with dimensions N1={N1}, N2={N2}, Nc={Nc} (N_hilbert = {N1*N2*Nc})")
 
 
-    # --- Sanity check (Unchanged) ---
     H_full_orig = dual_rail_H(N1, N2, Nc, **base_pars)
     print("Original builder -> Shape:", H_full_orig.shape, "Hermitian:", (H_full_orig - H_full_orig.dag()).norm() < 1e-12)
 
-    # --- χ extraction (Unchanged, but will be much faster) ---
     print("\nCalculating dispersive shifts...")
     t_chi_start = time.time()
     H_rwa, ops = make_H(N1, N2, Nc, base_pars, use_rwa=True)
@@ -274,15 +219,9 @@ if __name__ == "__main__":
     print(f"...done in {time.time() - t_chi_start:.2f}s")
 
 
-    # ==========================================================================
-    # --- FIX 3: Reduced sweep points for faster testing ---
-    # detuning_span = np.linspace(-1.0, +1.0, 25) # OLD
-    # wd_span = np.linspace(base_pars["omega_c"] - 0.2, base_pars["omega_c"] + 0.2, 41) # OLD
-    detuning_span = np.linspace(-1.0, +1.0, 11)  # NEW (Δ in GHz)
-    wd_span = np.linspace(base_pars["omega_c"] - 0.2, base_pars["omega_c"] + 0.2, 21) # NEW
-    # ==========================================================================
+    detuning_span = np.linspace(-1.0, +1.0, 11)
+    wd_span = np.linspace(base_pars["omega_c"] - 0.2, base_pars["omega_c"] + 0.2, 21)
     
-    # --- Detuning sweep for χ (Unchanged, but faster) ---
     print("\nSweeping detuning vs. chi...")
     t_chi_sweep_start = time.time()
     d_q1, chi_q1 = sweep_detuning_and_compute_chi(N1, N2, Nc, base_pars, use_rwa=True,
@@ -291,7 +230,6 @@ if __name__ == "__main__":
                                                   detuning_span=detuning_span, qubit='q2')
     print(f"...done in {time.time() - t_chi_sweep_start:.2f}s")
 
-    # Plot χ vs detuning
     plt.figure()
     plt.plot(d_q1, chi_q1, marker='o', label=r'$\chi_1(\Delta_1)$')
     plt.plot(d_q2, chi_q2, marker='s', label=r'$\chi_2(\Delta_2)$')
@@ -302,27 +240,18 @@ if __name__ == "__main__":
     plt.legend()
     plt.tight_layout()
 
-    # ==========================================================================
-    # --- FIX 2: Use the new, fast steadystate sweep ---
     print("\nSweeping drive frequency vs. steady state...")
     t_drive_start = time.time()
     
-    # We use H_rwa and ops, which we already generated
     nc_vs_wd, P_c_vs_wd = sweep_drive_spectrum_ss(
         H_rwa, ops, base_pars, wd_span, 
         eps=0.01, kappa_c=1e-3, gamma1=2e-4, gamma2=2e-4,
         gphi1=1e-4, gphi2=1e-4, drive_on='c'
     )
     
-    # --- OLD SLOW METHOD (for comparison) ---
-    # H_full, ops_full = make_H(N1, N2, Nc, base_pars, use_rwa=False)
-    # nc_vs_wd, P_c_vs_wd = sweep_drive_spectrum(H_full, ops_full, wd_span, eps=0.01,
-    #                                            kappa_c=1e-3, gamma1=2e-4, gamma2=2e-4)
-    # ==========================================================================
     
     print(f"...done in {time.time() - t_drive_start:.2f}s")
 
-    # Plot driven cavity steady-state photon number
     plt.figure()
     plt.plot(wd_span, nc_vs_wd, marker='.')
     plt.xlabel('Drive frequency ω_d (GHz)')
@@ -330,7 +259,6 @@ if __name__ == "__main__":
     plt.title('Driven cavity steady-state photons vs ω_d')
     plt.tight_layout()
 
-    # Plot power proxy
     plt.figure()
     plt.plot(wd_span, P_c_vs_wd, marker='.')
     plt.xlabel('Drive frequency ω_d (GHz)')
